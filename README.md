@@ -112,6 +112,52 @@ fuente a inspección local.
 
 ---
 
+## 👤 Sistema de cuentas y auditoría del motor (`backend/`)
+
+El motor puede registrar qué **acciones del motor** ejecuta cada usuario (qué comando,
+qué método intentó tocar y si funcionó o no) — **sin tocar el entorno del usuario**.
+Para eso hay un backend propio en **Rust** (axum + driver oficial de MongoDB) que es el
+**único** que habla con MongoDB Atlas; el cliente C++ nunca lleva la URI de la DB.
+
+### Backend (`namek_backend`)
+
+- `POST /register` y `POST /login` — password hasheada con **Argon2**; a cada sesión se
+  emite un **token aleatorio de 256 bits** (guardado como SHA-256 en la DB).
+- `POST /events` — log de eventos del motor (evento, método, éxito/fallo, detalle).
+- `GET /admin/users`, `GET /admin/events`, `POST /admin/ban`, `POST /admin/unban` —
+  solo con credenciales admin (Basic auth `ADMIN_USER`/`ADMIN_PASS`).
+- Al **banear** un usuario se **revocan todas sus sesiones** (sus tokens se borran).
+
+### Arranque
+
+```bash
+cp .env.example .env   # rellena MONGODB_URI (tu password real) + SERVER_SECRET + admin
+./run_backend.sh       # compila y levanta el backend en http://localhost:8787
+```
+
+> ⚠️ La URI de MongoDB y las credenciales admin viven SOLO en `.env` (gitignored).
+> Nunca se commitearon ni deben pegarse en chats.
+
+### Cliente C++ (CLI)
+
+```bash
+namek register pepe --pass *****   # primera vez: pide registro/login en el REPL
+namek login pepe --pass *****      # genera token de sesión en ~/.namek_session (0600)
+namek me                           # estado de tu cuenta (¿baneado?)
+namek logout                       # revoca el token
+
+namek admin users                  # panel: lista de usuarios + nº de eventos
+namek admin events --limit 50 --user pepe
+namek admin ban pepe               # banea y revoca sesiones
+namek admin unban pepe
+```
+
+Los eventos del motor se auditan de forma **best-effort** (si el backend está caído, el
+motor sigue funcionando sin bloquear): `command`, `mod_run`, `mod_pack`, `mod_install`
+y `sandbox_block` (cuando un mod intenta tocar una ruta prohibida).
+
+---
+
 ## 📦 Empaquetado Release Binario (`tb pack`)
 
 ```bash

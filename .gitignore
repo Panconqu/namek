@@ -21,3 +21,10 @@ demo_*_db.json
 .idea/
 *.swp
 .DS_Store
+
+# Secrets (NUNCA commitear)
+.env
+*.pem
+
+# Rust backend build artifacts
+backend/target/

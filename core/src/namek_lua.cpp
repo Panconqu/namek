@@ -4,6 +4,7 @@
 #include "namek_obfuscator.h"
 #include "namek_mod_sandbox.h"
 #include "namek_binary_format.h"
+#include "namek_telemetry.h"
 #include <iostream>
 #include <ctime>
 #include <unistd.h>
@@ -334,25 +335,32 @@ bool LuaModEngine::run_file(const std::string& filepath) {
     if (!ModSecuritySandbox::is_path_safe(filepath)) {
         std::cerr << color::RED << "Error: El Mod intenta acceder a una ruta prohibida: "
                   << filepath << color::RESET << "\n";
+        Telemetry::audit("sandbox_block", "file_path", false, filepath);
         return false;
     }
     if (!Utils::file_exists(filepath)) {
         std::cerr << color::RED << "Error: Mod de Lua no encontrado '" << filepath << "'" << color::RESET << "\n";
+        Telemetry::audit("mod_run", filepath, false, "archivo no encontrado");
         return false;
     }
 
+    bool ok = false;
     // Encrypted mods are decrypted in memory and never written to disk.
     if (filepath.rfind(".tb.bin") != std::string::npos) {
         std::string key = TBBinaryCompiler::resolve_release_key_for(filepath);
         std::string code = TBBinaryCompiler::decode_binary(filepath, key);
         if (code.empty()) {
             std::cerr << color::RED << "Error: No se pudo descifrar el Mod binario '" << filepath << "'" << color::RESET << "\n";
+            Telemetry::audit("mod_run", filepath, false, "fallo al descifrar");
             return false;
         }
-        return ModSecuritySandbox::run_locked(L, code, filepath);
+        ok = ModSecuritySandbox::run_locked(L, code, filepath);
+    } else {
+        ok = ModSecuritySandbox::run_locked(L, Utils::read_file(filepath), filepath);
     }
 
-    return ModSecuritySandbox::run_locked(L, Utils::read_file(filepath), filepath);
+    Telemetry::audit("mod_run", filepath, ok);
+    return ok;
 }
 
 std::vector<std::string> LuaModEngine::list_mods(const std::string& mods_dir) {
@@ -405,8 +413,10 @@ bool LuaModEngine::pack_mod(const std::string& lua_file, const std::string& out_
     if (TBBinaryCompiler::compile_to_binary(code, out, TBBModuleType::GENERIC, key)) {
         std::cout << color::GREEN << "✓ Mod cifrado (ChaCha20): " << out << color::RESET << "\n";
         std::cout << color::YELLOW << "  El código del Mod ya no es legible en disco." << color::RESET << "\n";
+        Telemetry::audit("mod_pack", lua_file, true, out);
         return true;
     }
+    Telemetry::audit("mod_pack", lua_file, false, "fallo al cifrar");
     return false;
 }
 

@@ -1,6 +1,7 @@
 #include "namek_mod_marketplace.h"
 #include "namek.h"
 #include "namek_toolbox_suite.h"
+#include "namek_telemetry.h"
 #include <iostream>
 #include <cstdlib>
 #include <cstdio>
@@ -199,6 +200,7 @@ bool ModMarketplace::install_remote_mod(const std::string& mod_name, bool auto_c
 
     if (!Utils::file_exists(tmp_path)) {
         std::cerr << color::RED << "Error: no se pudo descargar el Mod (offline?)." << color::RESET << "\n";
+        Telemetry::audit("mod_install", mod_name, false, "descarga fallida");
         return false;
     }
 
@@ -213,6 +215,7 @@ bool ModMarketplace::install_remote_mod(const std::string& mod_name, bool auto_c
             std::cerr << "  actual:   " << actual << "\n";
             std::cerr << color::YELLOW << "  El archivo se descartó (posible manipulación o versión incorrecta)." << color::RESET << "\n";
             std::remove(tmp_path.c_str());
+            Telemetry::audit("mod_install", mod_name, false, "fallo de integridad SHA-256");
             return false;
         }
         std::cout << color::GREEN << "✓ Integridad verificada (SHA-256)." << color::RESET << "\n";
@@ -221,6 +224,7 @@ bool ModMarketplace::install_remote_mod(const std::string& mod_name, bool auto_c
     if (rename(tmp_path.c_str(), dest_path.c_str()) != 0) {
         std::cerr << color::RED << "Error: no se pudo mover el Mod a '" << dest_path << "'." << color::RESET << "\n";
         std::remove(tmp_path.c_str());
+        Telemetry::audit("mod_install", mod_name, false, "error al mover archivo");
         return false;
     }
 
@@ -231,6 +235,7 @@ bool ModMarketplace::install_remote_mod(const std::string& mod_name, bool auto_c
 
     std::cout << color::GREEN << color::BOLD << "\n✓ ¡Mod '" << target->name << "' instalado exitosamente en '" << dest_path << "'!" << color::RESET << "\n";
     std::cout << "Para ejecutarlo: " << color::CYAN << "tb mod run " << dest_path << color::RESET << "\n";
+    Telemetry::audit("mod_install", mod_name, true, dest_path);
     return true;
 }
 

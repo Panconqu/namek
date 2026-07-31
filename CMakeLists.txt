@@ -20,6 +20,7 @@ set(CORE_SOURCES
     core/src/namek_lua.cpp
     core/src/namek_mod_sandbox.cpp
     core/src/namek_mod_marketplace.cpp
+    core/src/namek_telemetry.cpp
 )
 
 # Shared and Static C/C++ Libraries for Node and Python FFI
