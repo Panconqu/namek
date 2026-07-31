@@ -1,0 +1,34 @@
+[
+  {
+    "name": "security_sentinel",
+    "version": "2.1.0",
+    "description": "Monitor de seguridad del motor: sesión auditada, contador de comandos y comando 'lockdown' para proteger la config.",
+    "author": "Namek Security Lab",
+    "download_url": "https://raw.githubusercontent.com/Panconqu/namek/main/mods_catalog/mods/security_sentinel.lua",
+    "sha256": "1b2cffe2871344d6a6707822fda33b080713865d30f601684eef8140b0ffa201"
+  },
+  {
+    "name": "database_replicator",
+    "version": "1.4.0",
+    "description": "Replica el estado de NamekDB en snapshots con hash SHA-256. Comandos: backup_db, restore_db.",
+    "author": "Namek Core Team",
+    "download_url": "https://raw.githubusercontent.com/Panconqu/namek/main/mods_catalog/mods/database_replicator.lua",
+    "sha256": "9e96e736e4c21fd0a0d5cdcba006517c8bba4226db6df53bfe133bf802aed12d"
+  },
+  {
+    "name": "api_benchmarker_plus",
+    "version": "3.0.0",
+    "description": "Benchmarks sintéticos del motor (uuid/sha256/db_set) usando el reloj restringido del sandbox.",
+    "author": "DevOps Tools Inc",
+    "download_url": "https://raw.githubusercontent.com/Panconqu/namek/main/mods_catalog/mods/api_benchmarker_plus.lua",
+    "sha256": "1e3e2f48a1f92ec3d528a535a3d2853f9f65fdedfea7b8372ad227f5f70e71c5"
+  },
+  {
+    "name": "engine_booster",
+    "version": "1.0.0",
+    "description": "Demo del modelo open-close: hooks on_command, comandos propios (scan_mod, set_verbose) y config runtime.",
+    "author": "Namek Community",
+    "download_url": "https://raw.githubusercontent.com/Panconqu/namek/main/mods_catalog/mods/engine_booster.lua",
+    "sha256": "bf56ca5c0e9ac5fb515827a2456be99467dd1aa1d7bc6554ae924a203556b00b"
+  }
+]

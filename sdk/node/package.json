@@ -1,0 +1,9 @@
+{
+  "name": "namek-sdk",
+  "version": "1.0.0",
+  "description": "Namek Developer Framework & Toolbox SDK for Node.js",
+  "main": "index.js",
+  "keywords": ["namek", "cli", "nosql", "toolbox", "framework", "database"],
+  "author": "Namek Team",
+  "license": "MIT"
+}

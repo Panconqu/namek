@@ -1,0 +1,9 @@
+# Namek Custom Syntax Script (.tb)
+tb print "=== EJECUTANDO SCRIPT SINTAXIS TOOLBOX (.tb) ==="
+tb set api key "sk-prod-8877665544332211"
+tb set api endpoint "https://api.namek.io/v2"
+tb set generate api "payment_gateway"
+tb get api key
+tb get api endpoint
+tb uuid
+tb print "✓ Script .tb finalizado con éxito!"

@@ -1,0 +1,16 @@
+{
+  "kv": {
+    "app_name": "Super CLI Tool",
+    "version": "2.5.0"
+  },
+  "collections": {
+    "users": {
+      "611bd156-08d4-48a9-a0ca-fe48f6c1bf59": {
+        "_id": "611bd156-08d4-48a9-a0ca-fe48f6c1bf59",
+        "name": "Alice Johnson",
+        "role": "Lead Architect",
+        "email": "alice@example.com"
+      }
+    }
+  }
+}

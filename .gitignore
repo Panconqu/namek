@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+bin/
+dist/
+
+# Rust
+core/rust/target/
+
+# Python
+__pycache__/
+*.pyc
+
+# Namek data / generated files
+*.db.json
+namek_db.json
+*.tb.bin
+demo_*_db.json
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

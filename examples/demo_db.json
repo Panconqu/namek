@@ -1,0 +1,22 @@
+{
+  "kv": {
+    "app_name": "Super CLI Tool",
+    "version": "2.5.0"
+  },
+  "collections": {
+    "users": {
+      "ce1f6234-3993-4bae-bf10-6ce1a946aa5c": {
+        "_id": "ce1f6234-3993-4bae-bf10-6ce1a946aa5c",
+        "name": "Alice Johnson",
+        "role": "Lead Architect",
+        "email": "alice@example.com"
+      },
+      "db59214a-03f6-4d8b-9e97-383bc4243073": {
+        "_id": "db59214a-03f6-4d8b-9e97-383bc4243073",
+        "name": "Alice Johnson",
+        "role": "Lead Architect",
+        "email": "alice@example.com"
+      }
+    }
+  }
+}
