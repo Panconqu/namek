@@ -7,8 +7,8 @@ if [ ! -f .env ]; then
     echo "ERROR: falta el archivo .env (pide uno con cp .env.example .env)" >&2
     exit 1
 fi
-if grep -q "<db_password>" .env; then
-    echo "ERROR: rellena MONGODB_URI en .env con tu contraseña real (no la compartas en chats)." >&2
+if grep -qE "<db_password>|<YOUR_" .env; then
+    echo "ERROR: rellena DATABASE_URL en .env con tu string real de PostgreSQL (no lo compartas en chats)." >&2
     exit 1
 fi
 

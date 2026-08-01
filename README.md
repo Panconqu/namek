@@ -131,11 +131,11 @@ Para eso hay un backend propio en **Rust** (axum + driver oficial de MongoDB) qu
 ### Arranque
 
 ```bash
-cp .env.example .env   # rellena MONGODB_URI (tu password real) + SERVER_SECRET + admin
+cp .env.example .env   # rellena DATABASE_URL (tu string de PostgreSQL) + SERVER_SECRET + admin
 ./run_backend.sh       # compila y levanta el backend en http://localhost:8787
 ```
 
-> ⚠️ La URI de MongoDB y las credenciales admin viven SOLO en `.env` (gitignored).
+> ⚠️ La URI de PostgreSQL y las credenciales admin viven SOLO en `.env` (gitignored).
 > Nunca se commitearon ni deben pegarse en chats.
 
 ### Cliente C++ (CLI)

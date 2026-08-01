@@ -1,7 +1,4 @@
 #![allow(non_snake_case)]
-use std::path::Path;
-use std::sync::Arc;
-
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -11,13 +8,12 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::{engine::general_purpose, Engine as _};
-use futures::StreamExt;
-use mongodb::bson::{doc, DateTime};
-use mongodb::options::{ClientOptions, IndexOptions};
-use mongodb::{Client, Collection, IndexModel};
+use chrono::Utc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx::postgres::PgPoolOptions;
+use sqlx::FromRow;
 use tower_http::cors::{Any, CorsLayer};
 
 // ---------------------------------------------------------------------------
@@ -26,36 +22,27 @@ use tower_http::cors::{Any, CorsLayer};
 
 #[derive(Clone)]
 struct AppState {
-    users: Collection<User>,
-    tokens: Collection<TokenDoc>,
-    events: Collection<EventDoc>,
+    pool: sqlx::PgPool,
     admin_user: String,
     admin_pass: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow)]
 struct User {
     username: String,
     pass_hash: String,
     banned: bool,
-    created_at: DateTime,
+    created_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TokenDoc {
-    token_hash: String,
-    username: String,
-    created_at: DateTime,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, FromRow, Serialize, Clone)]
 struct EventDoc {
     username: String,
     event: String,
     method: String,
     success: bool,
     detail: String,
-    ts: DateTime,
+    ts: chrono::DateTime<Utc>,
 }
 
 // ---------------------------------------------------------------------------
@@ -132,11 +119,13 @@ async fn bearer_username(state: &AppState, headers: &HeaderMap) -> Result<String
         .strip_prefix("Bearer ")
         .ok_or(StatusCode::UNAUTHORIZED)?;
     let hash = sha256_hex(token);
-    let filter = doc! { "token_hash": &hash };
-    match state.tokens.find_one(filter).await {
-        Ok(Some(t)) => Ok(t.username),
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
+    sqlx::query_scalar::<_, String>("SELECT username FROM tokens WHERE token_hash = $1")
+        .bind(&hash)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 fn admin_ok(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
@@ -182,14 +171,12 @@ async fn register(State(st): State<AppState>, Json(c): Json<Credentials>) -> imp
         )
             .into_response();
     }
-    if st
-        .users
-        .find_one(doc! { "username": u })
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = $1")
+        .bind(u)
+        .fetch_one(&st.pool)
         .await
-        .map_err(internal)
-        .unwrap()
-        .is_some()
-    {
+        .unwrap_or(1);
+    if existing > 0 {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error": "El usuario ya existe."})),
@@ -204,13 +191,13 @@ async fn register(State(st): State<AppState>, Json(c): Json<Credentials>) -> imp
         .unwrap()
         .to_string();
 
-    let user = User {
-        username: u.to_string(),
-        pass_hash: hash,
-        banned: false,
-        created_at: DateTime::now(),
-    };
-    if st.users.insert_one(&user).await.is_err() {
+    if sqlx::query("INSERT INTO users (username, pass_hash) VALUES ($1, $2)")
+        .bind(u)
+        .bind(&hash)
+        .execute(&st.pool)
+        .await
+        .is_err()
+    {
         return (
             StatusCode::CONFLICT,
             Json(serde_json::json!({"error": "El usuario ya existe."})),
@@ -231,24 +218,25 @@ async fn register(State(st): State<AppState>, Json(c): Json<Credentials>) -> imp
 
 async fn issue_token(st: &AppState, username: &str) -> String {
     let token = gen_token();
-    let td = TokenDoc {
-        token_hash: sha256_hex(&token),
-        username: username.to_string(),
-        created_at: DateTime::now(),
-    };
-    let _ = st.tokens.insert_one(&td).await;
+    let _ = sqlx::query("INSERT INTO tokens (token_hash, username) VALUES ($1, $2)")
+        .bind(sha256_hex(&token))
+        .bind(username)
+        .execute(&st.pool)
+        .await;
     token
 }
 
 async fn login(State(st): State<AppState>, Json(c): Json<Credentials>) -> impl IntoResponse {
     let u = c.username.trim();
-    let Some(user) = st
-        .users
-        .find_one(doc! { "username": u })
-        .await
-        .map_err(internal)
-        .unwrap()
-    else {
+    let user: Option<User> = sqlx::query_as(
+        "SELECT username, pass_hash, banned, created_at FROM users WHERE username = $1",
+    )
+    .bind(u)
+    .fetch_optional(&st.pool)
+    .await
+    .map_err(internal)
+    .unwrap();
+    let Some(user) = user else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "Credenciales inválidas."})),
@@ -297,9 +285,9 @@ async fn logout(State(st): State<AppState>, headers: HeaderMap) -> impl IntoResp
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let token = auth.strip_prefix("Bearer ").unwrap_or("");
-    let _ = st
-        .tokens
-        .delete_one(doc! { "token_hash": sha256_hex(token) })
+    let _ = sqlx::query("DELETE FROM tokens WHERE token_hash = $1")
+        .bind(sha256_hex(token))
+        .execute(&st.pool)
         .await;
     StatusCode::OK.into_response()
 }
@@ -309,10 +297,13 @@ async fn me(State(st): State<AppState>, headers: HeaderMap) -> impl IntoResponse
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    let banned = match st.users.find_one(doc! { "username": &username }).await {
-        Ok(Some(u)) => u.banned,
-        _ => false,
-    };
+    let banned: bool = sqlx::query_scalar("SELECT banned FROM users WHERE username = $1")
+        .bind(&username)
+        .fetch_optional(&st.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false);
     (StatusCode::OK, Json(MeResponse { username, banned })).into_response()
 }
 
@@ -329,15 +320,18 @@ async fn add_event(
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    let ev = EventDoc {
-        username,
-        event: body.event,
-        method: body.method,
-        success: body.success,
-        detail: body.detail,
-        ts: DateTime::now(),
-    };
-    if st.events.insert_one(&ev).await.is_err() {
+    if sqlx::query(
+        "INSERT INTO events (username, event, method, success, detail) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(&username)
+    .bind(&body.event)
+    .bind(&body.method)
+    .bind(body.success)
+    .bind(&body.detail)
+    .execute(&st.pool)
+    .await
+    .is_err()
+    {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     StatusCode::CREATED.into_response()
@@ -347,11 +341,11 @@ async fn add_event(
 // Panel admin (solo ADMIN_USER / ADMIN_PASS)
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Debug, FromRow, Serialize)]
 struct AdminUserView {
     username: String,
     banned: bool,
-    created_at: DateTime,
+    created_at: chrono::DateTime<Utc>,
     events: i64,
 }
 
@@ -359,30 +353,18 @@ async fn admin_users(State(st): State<AppState>, headers: HeaderMap) -> impl Int
     if let Err(e) = admin_ok(&st, &headers) {
         return e.into_response();
     }
-    let mut cursor = match st.users.find(doc! {}).await {
-        Ok(c) => c,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let mut out = Vec::new();
-    while let Some(u) = cursor.next().await {
-        let u = match u {
-            Ok(u) => u,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-        };
-        let count = st
-            .events
-            .count_documents(doc! { "username": &u.username })
-            .await
-            .unwrap_or(0);
-        out.push(AdminUserView {
-            username: u.username,
-            banned: u.banned,
-            created_at: u.created_at,
-            events: count as i64,
-        });
-    }
-    out.sort_by(|a, b| b.events.cmp(&a.events));
-    (StatusCode::OK, Json(out)).into_response()
+    let rows: Vec<AdminUserView> = sqlx::query_as(
+        "SELECT u.username AS username, u.banned AS banned, u.created_at AS created_at, \
+         COALESCE(COUNT(e.id), 0)::BIGINT AS events \
+         FROM users u LEFT JOIN events e ON e.username = u.username \
+         GROUP BY u.username, u.banned, u.created_at \
+         ORDER BY events DESC, u.username",
+    )
+    .fetch_all(&st.pool)
+    .await
+    .map_err(internal)
+    .unwrap();
+    (StatusCode::OK, Json(rows)).into_response()
 }
 
 async fn admin_events(
@@ -393,28 +375,31 @@ async fn admin_events(
     if let Err(e) = admin_ok(&st, &headers) {
         return e.into_response();
     }
-    let mut filter = doc! {};
-    if let Some(u) = q.username {
-        filter.insert("username", u);
-    }
-    let mut cursor = match st
-        .events
-        .find(filter)
-        .limit(q.limit.max(1))
-        .sort(doc! { "ts": -1 })
-        .await
-    {
-        Ok(c) => c,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let mut out = Vec::new();
-    while let Some(e) = cursor.next().await {
-        match e {
-            Ok(e) => out.push(e),
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let limit = q.limit.max(1).min(1000);
+    let rows: Vec<EventDoc> = match q.username {
+        Some(u) => {
+            sqlx::query_as(
+                "SELECT username, event, method, success, detail, ts \
+                 FROM events WHERE username = $1 ORDER BY ts DESC LIMIT $2",
+            )
+            .bind(u)
+            .bind(limit)
+            .fetch_all(&st.pool)
+            .await
+        }
+        None => {
+            sqlx::query_as(
+                "SELECT username, event, method, success, detail, ts \
+                 FROM events ORDER BY ts DESC LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(&st.pool)
+            .await
         }
     }
-    (StatusCode::OK, Json(out)).into_response()
+    .map_err(internal)
+    .unwrap();
+    (StatusCode::OK, Json(rows)).into_response()
 }
 
 async fn admin_ban(
@@ -425,25 +410,23 @@ async fn admin_ban(
     if let Err(e) = admin_ok(&st, &headers) {
         return e.into_response();
     }
-    let res = st
-        .users
-        .update_one(
-            doc! { "username": &body.username },
-            doc! { "$set": { "banned": true } },
-        )
+    let res = sqlx::query("UPDATE users SET banned = $1 WHERE username = $2")
+        .bind(true)
+        .bind(&body.username)
+        .execute(&st.pool)
         .await
         .map_err(internal)
         .unwrap();
-    if res.matched_count == 0 {
+    if res.rows_affected() == 0 {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Usuario no encontrado."})),
         )
             .into_response();
     }
-    let _ = st
-        .tokens
-        .delete_many(doc! { "username": &body.username })
+    let _ = sqlx::query("DELETE FROM tokens WHERE username = $1")
+        .bind(&body.username)
+        .execute(&st.pool)
         .await;
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
@@ -456,16 +439,14 @@ async fn admin_unban(
     if let Err(e) = admin_ok(&st, &headers) {
         return e.into_response();
     }
-    let res = st
-        .users
-        .update_one(
-            doc! { "username": &body.username },
-            doc! { "$set": { "banned": false } },
-        )
+    let res = sqlx::query("UPDATE users SET banned = $1 WHERE username = $2")
+        .bind(false)
+        .bind(&body.username)
+        .execute(&st.pool)
         .await
         .map_err(internal)
         .unwrap();
-    if res.matched_count == 0 {
+    if res.rows_affected() == 0 {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Usuario no encontrado."})),
@@ -601,6 +582,43 @@ async fn openapi() -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Esquema
+// ---------------------------------------------------------------------------
+
+async fn ensure_schema(pool: &sqlx::PgPool) {
+    for ddl in [
+        "CREATE TABLE IF NOT EXISTS users (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            pass_hash TEXT NOT NULL,
+            banned BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )",
+        "CREATE TABLE IF NOT EXISTS tokens (
+            token_hash TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )",
+        "CREATE TABLE IF NOT EXISTS events (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT NOT NULL,
+            event TEXT NOT NULL,
+            method TEXT NOT NULL,
+            success BOOLEAN NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            ts TIMESTAMPTZ NOT NULL DEFAULT now()
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_events_username ON events(username)",
+        "CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts)",
+    ] {
+        sqlx::query(ddl)
+            .execute(pool)
+            .await
+            .expect("fallo al crear el esquema de PostgreSQL");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -609,15 +627,14 @@ async fn main() {
     let _ = dotenvy::dotenv();
     let _ = dotenvy::from_path("../.env");
 
-    let uri = std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://127.0.0.1:27017".to_string());
-    let db_name = std::env::var("MONGODB_DB").unwrap_or_else(|_| "namek".to_string());
+    let url = std::env::var("DATABASE_URL").unwrap_or_default();
     let admin_user = std::env::var("ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
     let admin_pass = std::env::var("ADMIN_PASS").unwrap_or_else(|_| "admin123".to_string());
     let port = std::env::var("BACKEND_PORT").unwrap_or_else(|_| "8787".to_string());
 
-    if uri.contains("<db_password>") {
+    if url.is_empty() || url.contains("<db_password>") || url.contains("<YOUR_") {
         eprintln!(
-            "[namek_backend] ERROR: MONGODB_URI contiene '<db_password>'. Rellena el archivo .env con tu contraseña real (no la compartas en chats)."
+            "[namek_backend] ERROR: DATABASE_URL está vacío o con placeholder. Pon tu string real de PostgreSQL en .env (no la compartas en chats)."
         );
         std::process::exit(1);
     }
@@ -631,44 +648,18 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let opts = ClientOptions::parse(&uri)
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&url)
         .await
-        .expect("falló al parsear MONGODB_URI");
-    let client = Client::with_options(opts).expect("falló al crear el cliente MongoDB");
-    let db = client.database(&db_name);
-
-    let users: Collection<User> = db.collection("users");
-    let tokens: Collection<TokenDoc> = db.collection("tokens");
-    let events: Collection<EventDoc> = db.collection("events");
-
-    let unique = IndexOptions::builder().unique(true).build();
-    users
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "username": 1 })
-                .options(unique.clone())
-                .build(),
-        )
-        .await
-        .expect("índice users.username");
-    tokens
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! { "token_hash": 1 })
-                .options(unique)
-                .build(),
-        )
-        .await
-        .expect("índice tokens.token_hash");
-    events
-        .create_index(IndexModel::builder().keys(doc! { "username": 1 }).build())
-        .await
-        .expect("índice events.username");
+        .unwrap_or_else(|e| {
+            eprintln!("[namek_backend] ERROR: no se pudo conectar a PostgreSQL: {e}");
+            std::process::exit(1);
+        });
+    ensure_schema(&pool).await;
 
     let state = AppState {
-        users,
-        tokens,
-        events,
+        pool,
         admin_user,
         admin_pass,
     };
@@ -696,6 +687,6 @@ async fn main() {
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind");
-    println!("[namek_backend] escuchando en http://{} (DB: {})", addr, db_name);
+    println!("[namek_backend] escuchando en http://{} (PostgreSQL: Neon)", addr);
     axum::serve(listener, app).await.expect("serve");
 }
