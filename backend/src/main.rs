@@ -630,7 +630,9 @@ async fn main() {
     let url = std::env::var("DATABASE_URL").unwrap_or_default();
     let admin_user = std::env::var("ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
     let admin_pass = std::env::var("ADMIN_PASS").unwrap_or_else(|_| "admin123".to_string());
-    let port = std::env::var("BACKEND_PORT").unwrap_or_else(|_| "8787".to_string());
+    let port = std::env::var("PORT")
+        .or_else(|_| std::env::var("BACKEND_PORT"))
+        .unwrap_or_else(|_| "8787".to_string());
 
     if url.is_empty() || url.contains("<db_password>") || url.contains("<YOUR_") {
         eprintln!(
